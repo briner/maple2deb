@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# P R E P A R A T I O N   B E F O R E
+# T H E   M A T L A B   I N S T A L L A T I O N
+#
+
+if [[ $(uname -m) != 'x86_64' ]] ; then
+    echo "this script only works for amd64 distribution"
+    exit 1
+fi
+
+###########################################################
+# DEFINITION
+#
+
+#
+# software related
+SOFT="maple"
+SOFT_VER=18
+SHORT_SOFT_VER=18
+
+#
+# package related
+DEB_VER=0
+SHORT_ORG=UniGE ; # a short name of your organisation
+# where the soft will be installed : PKG_ROOT_DIR
+PKG_ROOT_DIR="/opt/${SHORT_ORG,,}/${SOFT}${SHORT_SOFT_VER}"
+#
+MAIN_DIR=~/packaging/maple/18/
+EMAIL_MAINTAINER='Cedric BRINER <Cedric.Briner@UniGE.ch>'
+#
+SHORT_ORG=UniGE ; # a short name of your organisation
+
+#
+#
+# constructed variable
+BUILD_DEB=${MAIN_DIR}/${SHORT_ORG,,}-${SOFT}${SHORT_SOFT_VER}_${SOFT_VER}-${DEB_VER}
+DEBNAME=${SHORT_ORG,,}-${SOFT}${SHORT_SOFT_VER}
+#LICENSE_STRING="$(cat ${MAIN_DIR}/../non-git/license-string-${SHORT_SOFT_VER})"
+
+install_it()
+{
+    cd ${MAIN_DIR}
+    if ! touch ${PKG_ROOT_DIR}/is_writable
+    then
+        echo "arrgh, dir(${PKG_ROOT_DIR}) is not writable by ${USERNAME}"
+        echo "  please creute the dir (${PKG_ROOT_DIR}) and gives right for user(${USERNAME})"
+        echo " - sudo -s (ubuntu) or su - (debian)"
+        echo " - mkdir -p ${PKG_ROOT_DIR}"
+        echo " - chown ${USERNAME}: ${PKG_ROOT_DIR}"    
+        echo " - exit"
+        exit 1
+    fi
+    rm -f ${PKG_ROOT_DIR}/is_writable
+    #
+    #
+    echo "please install $SOFT into dir(${PKG_ROOT_DIR})"
+}
+
+rsync_it()
+{
+    echo "rsync ${PKG_ROOT_DIR} under rsync dir, this can take times"
+    rsync -avq --force --delete ${PKG_ROOT_DIR}/ ${MAIN_DIR}/rsync/
+    echo " - rsynced !"
+    #
+    # 
+    echo "no need any more to keep ${PKG_ROOT_DIR}"
+    echo "sudo rm -fr ${PKG_ROOT_DIR}"
+}
+
+make_deb()
+{
+    cd ${MAIN_DIR}
+    #
+    #
+    # rapatriate the fresh install to the BUILD_DEB SPACE
+    echo "create de debian build directory"
+    rm -fr ${BUILD_DEB}
+    mkdir -p ${BUILD_DEB}/{${PKG_ROOT_DIR},usr/bin,DEBIAN}
+    mkdir -p ${BUILD_DEB}/{usr/share/pixmaps,usr/share/applications}
+    
+    echo "rsync dir .../rsync/ to .../$(basename ${BUILD_DEB})/${PKG_ROOT_DIR}/"
+    rsync -avq \
+          --force --delete \
+          --link-dest=${MAIN_DIR}/rsync \
+          ${MAIN_DIR}/rsync/ ${BUILD_DEB}/${PKG_ROOT_DIR}/
+    #
+    # BIN
+    cd  ${BUILD_DEB}/usr/bin
+    ln -sf ${PKG_ROOT_DIR}/bin/xmaple xmaple${SHORT_SOFT_VER}
+    ln -sf ${PKG_ROOT_DIR}/bin/maple maple${SHORT_SOFT_VER}
+    #
+    # control
+    cat  > ${BUILD_DEB}/DEBIAN/control << EOF
+Package: ${DEBNAME}
+Version: ${SOFT_VER}-${DEB_VER}
+Architecture: amd64
+Maintainer: ${EMAIL_MAINTAINER}
+Section: main
+Priority: extra
+Description: ${SOFT}${SHORT_SOFT_VER} @ ${SHORT_ORG}
+ Maple is the essential technical computing software for today’s engineers,
+ mathematicians, and scientists. Whether you need to do quick calculations,
+ develop design sheets, teach fundamental concepts, or produce sophisticated
+ high-fidelity simulation models, Maple’s world-leading computation engine
+ offers the breadth and depth to handle every type of mathematics.
+EOF
+    #
+    #
+    # creation of the DEBIAN/postrm (post-remove)
+    cat > ${BUILD_DEB}/DEBIAN/postrm << %%%EOF%%%
+#!/bin/bash
+rm -fr ${PKG_ROOT_DIR}
+%%%EOF%%%
+    chmod 755 ${BUILD_DEB}/DEBIAN/postrm
+    #
+    #
+    # DESKTOP
+#    convert ${MAIN_DIR}/../maple2deb.d/maple.jpeg -resize 128x128 -pointsize 48 -gravity northeast -annotate 0 "${SHORT_SOFT_VER}" ${BUILD_DEB}/usr/share/pixmaps/${SHORT_ORG,,}-${SOFT}${SHORT_SOFT_VER}.png
+    cp $(ls -1 ${BUILD_DEB}/${PKG_ROOT_DIR}/bin/Maple*.png| head -1)  ${BUILD_DEB}/usr/share/pixmaps/${SHORT_ORG,,}-${SOFT}${SHORT_SOFT_VER}.png
+    cat > ${BUILD_DEB}/usr/share/applications/${DEBNAME}.desktop << %%%EOF%%%
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=${SOFT} ${SOFT_VER}
+Type=Application
+Comment=Maple 18
+Exec=xmaple${SHORT_SOFT_VER}
+Terminal=false
+Icon=${DEBNAME}.png
+GenericName=Maple
+Categories=Applications;Education;Mathematics;
+%%%EOF%%%
+
+
+
+# I needed to install twice maple (one on a i386 and the other on amd64)
+# then I simply merged both FS
+fakeroot dpkg -b ${BUILD_DEB}
+echo "sudo dpkg -i ${BUILD_DEB}.deb"
+}
+
+###########################################################
+# main
+#
+
+usage () {
+	scriptname=$(basename ${0})
+   cat <<EOF
+Usage: $scriptname
+       usually we do (in this order) :
+         - configure in the code the definition part
+         - install spss
+             $scriptname -i
+         - install the software itself
+             /media/briner/mathematica_9.0/Unix/Installer/MathInstaller
+         - rsync the installation on packaging/soft/version/rsync
+             $scriptname -r
+         - make a deb package of the software
+            $scriptname -m
+   -h   displays basic help
+   -v   verbose
+   -l   stdout and stderr to \$LOG_PATH(${LOG_PATH})
+   -i   prepare the OS to install ${SOFT}
+   -r   rsync <where should be the definitive soft> to <dir in the packaging space>
+   -m   make a deb of the software
+EOF
+   exit 0
+}
+
+IS_AN_OPTION="False"
+IS_INSTALL="False"
+IS_RSYNC="False"
+IS_MAKE_DEB="False"
+while getopts ":hvlirdm" opt; do
+  IS_AN_OPTION="True"
+  case $opt in
+    h)
+      usage
+      ;;
+    v)
+      IS_WRAP_SSL="True"
+      IS_WRAP_SOMETHING="True"
+      ;;
+    l)
+      echo "not yet implemented"
+      usage
+      ;;
+    i)
+      IS_INSTALL="True"
+      ;;
+    r)
+      IS_RSYNC="True"
+      ;;
+    m)
+      IS_MAKE_DEB="True"
+      ;;
+    *)
+      echo "unknown option"
+      usage
+  esac
+done
+
+
+shift $((OPTIND-1))
+
+if test "${IS_AN_OPTION}" = "False"
+then
+    usage
+fi
+
+if test "${IS_INSTALL}" = "True"
+then
+    echo "installation of spss"
+    echo "--------------------"
+    install_it | sed -u "s|^|  |"
+fi
+
+if test "${IS_RSYNC}" = "True"
+then
+    echo
+    echo "syncing it"
+    echo "----------"
+    rsync_it | sed -u "s|^|     |"
+fi
+
+if test "${IS_MAKE_DEB}" = "True"
+then
+    echo
+    echo " - make a deb"
+    echo "   ----------"
+    cd ${MAIN_DIR}
+    make_deb | sed -u "s|^|     |"
+fi
